@@ -19,7 +19,8 @@ def register_model(model_number):
     generate_key(private_path)
     public_key(private_path)
     
-    add_model_to_blockchain(public_path)
+    if add_model_to_blockchain(public_path):
+        return True
 
 
 def sign_image(image_path, model_number, private_key_path):
@@ -41,7 +42,9 @@ def sign_image(image_path, model_number, private_key_path):
     }
 
     ext = os.path.splitext(image_path)[1].lower()
-    output_name = f"signed_{os.path.basename(image_path)}"
+    image_dir = os.path.dirname(image_path)
+    image_name = os.path.basename(image_path)
+    output_name = os.path.join(image_dir, f"signed_{image_name}")
 
     if ext == ".png":
         add_metadata_png(image_path, metadata_payload, output_name)
@@ -50,7 +53,7 @@ def sign_image(image_path, model_number, private_key_path):
     else:
         return f"Error: Unsupported format: {ext}"
 
-    return "Done"
+    return True
 
 def verify_image(image_path):
     if not os.path.exists(image_path):
@@ -77,9 +80,9 @@ def verify_image(image_path):
 
     is_valid = verify_image_signature(public_key_hex, extracted_sig, extracted_hash)
     if is_valid:
-        return True
+        return extracted_hash,model_number
     else:
-        return False
+        return False,False
 
 
 if __name__ == "__main__":
