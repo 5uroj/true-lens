@@ -1,2 +1,7 @@
 /blockchain/.env
+<<<<<<< HEAD
 /FrontEnd/node_modules
+=======
+__pycache__/
+*.pyc
+>>>>>>> c6e8fda (Debuged device adding pythong script and other small modifications)
