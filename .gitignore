@@ -4,4 +4,5 @@
 =======
 __pycache__/
 *.pyc
+.env
 >>>>>>> c6e8fda (Debuged device adding pythong script and other small modifications)

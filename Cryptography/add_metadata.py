@@ -4,8 +4,8 @@ import shutil
 from PIL import Image, PngImagePlugin
 import piexif
 
-# ------------------ Generic JPEG/JPG lossless metadata ------------------ #
-def add_usercomment_lossless(image_path, user_content, output_path=None):
+
+def add_metadata_jpg(image_path, user_content, output_path=None):
     if not os.path.exists(image_path):
         print(f"File not found: {image_path}")
         return
@@ -23,7 +23,7 @@ def add_usercomment_lossless(image_path, user_content, output_path=None):
     print(f"UserComment added losslessly to: {output_path}")
 
 # ------------------ PNG metadata ------------------ #
-def add_usercomment_png(image_path, user_content, output_path=None):
+def add_metadata_png(image_path, user_content, output_path=None):
     if not os.path.exists(image_path):
         print(f"File not found: {image_path}")
         return
@@ -38,7 +38,7 @@ def add_usercomment_png(image_path, user_content, output_path=None):
     print(f"UserComment added to PNG: {output_path}")
 
 # ------------------ JPEG lossless metadata ------------------ #
-def add_usercomment_jpeg_lossless(input_path, user_content, output_path):
+def add_metadata_jpeg(input_path, user_content, output_path):
     if not os.path.exists(input_path):
         print(f"File not found: {input_path}")
         return

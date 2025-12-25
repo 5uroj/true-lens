@@ -14,7 +14,7 @@ def add_model_to_blockchain(pem_file_path):
     if not path_obj.exists():
         return f"Error: File {pem_file_path} not found", None
 
-    model_name = path_obj.stem
+    model_name = path_obj.stem.replace("_public", "")
 
     try:
         with open(pem_file_path, "rb") as f:
@@ -62,7 +62,6 @@ def add_model_to_blockchain(pem_file_path):
         )
         tx_hash = w3.eth.send_raw_transaction(signed_txn.raw_transaction)
 
-        print(f"Waiting for confirmation...")
         w3.eth.wait_for_transaction_receipt(tx_hash)
         return tx_hash.hex(), model_name
 
