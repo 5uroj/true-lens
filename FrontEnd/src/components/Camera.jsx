@@ -1,7 +1,9 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { Camera as CameraIcon, ShieldCheck, Clock, Image as ImageIcon, CheckCircle2, X, CameraOff } from 'lucide-react';
+import Alert from './Alert';
 
-const Camera = ({ onNavbarVisibilityChange }) => {
+const Camera = ({ onNavigateHome }) => {
+
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const canvasRef = useRef(document.createElement('canvas'));
@@ -13,60 +15,132 @@ const Camera = ({ onNavbarVisibilityChange }) => {
   const [cameraName, setCameraName] = useState('Detecting camera...');
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [isCameraEnabled, setIsCameraEnabled] = useState(false);
+  const [alert, setAlert] = useState(null);
 
-  // --- Logic: Image Hash & Capture (Core Functionality Preserved) ---
-  const computeImageFileHash = async (base64Data) => {
-    const binaryString = atob(base64Data);
-    const bytes = new Uint8Array(binaryString.length);
-    for (let i = 0; i < binaryString.length; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
-    }
-    const hashBuffer = await crypto.subtle.digest('SHA-256', bytes);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+  const triggerAlert = (variant, title, message) => {
+    setAlert({ variant, title, message });
   };
 
   const captureImage = async () => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
-
-    if (!video || !canvas || !stream) return alert('Camera not ready.');
+    const TARGET_URL = "https://api.truelens.qzz.io/uploadmedia";
+  
+    if (!video || !canvas || !stream) {
+      triggerAlert('error', 'System Error', 'Camera interface not initialized.');
+      return;
+    }
+  
     if (video.readyState !== video.HAVE_ENOUGH_DATA) return;
-
+  
     try {
       const context = canvas.getContext('2d');
+      const now = new Date();
+      const timestamp = now.getTime();
+      const fileName = `TL-AUTH-${timestamp}.png`;
+  
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
       context.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-      const imageDataURL = canvas.toDataURL('image/png');
-      const base64Data = imageDataURL.split(',')[1] || imageDataURL;
-      const hash = await computeImageFileHash(base64Data);
-
-      const now = new Date();
-      const imageObject = {
-        id: now.getTime(),
-        imageData: imageDataURL,
-        dateTime: now.toLocaleString(),
-        filename: `TL-${now.getTime()}.png`,
-        cameraName: cameraName || 'TrueLens-Alpha',
-        hash
-      };
-
-      setCapturedImages((prev) => [...prev, imageObject]);
-      localStorage.setItem('images', JSON.stringify([imageObject])); // Logic preserved
+  
+      const rawPixelData = context.getImageData(0, 0, canvas.width, canvas.height).data;
+      const secureHash = await computeRawPixelHash(rawPixelData);
+  
+      const pngBlob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+      const pngImageFile = new File([pngBlob], fileName, {
+        type: 'image/png',
+        lastModified: timestamp,
+      });
+  
+      const formData = new FormData();
+      formData.append("media", pngImageFile);      
+      formData.append("device-id", convertToSlug(cameraName)); 
+  
+      const response = await fetch(TARGET_URL, {
+        method: "POST",
+        body: formData, 
+      });
+  
+      // Handle Errors (Flask returns JSON for errors, so we parse as text/json)
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || `Server Error: ${response.status}`);
+      }
+  
+      // --- MODIFIED DOWNLOAD LOGIC START ---
+      // 1. Capture the response as a Blob (Binary file)
+      const signedBlob = await response.blob();
       
-      // Auto-download logic
+      // 2. Create a local URL for the signed file
+      const downloadUrl = window.URL.createObjectURL(signedBlob);
+  
+      // 3. Trigger direct download
       const link = document.createElement('a');
-      link.href = imageDataURL;
-      link.download = imageObject.filename;
+      link.href = downloadUrl;
+      link.download = `signed_${fileName}`; // This matches your Flask signed_filename logic
+      document.body.appendChild(link);
       link.click();
+      document.body.removeChild(link);
+  
+      // 4. Cleanup memory
+      window.URL.revokeObjectURL(downloadUrl);
+      // --- MODIFIED DOWNLOAD LOGIC END ---
+  
+      const displayUrl = URL.createObjectURL(pngImageFile);
+      const imageObject = {
+        id: timestamp,
+        rawPixels: rawPixelData,
+        pngFile: pngImageFile,
+        hash: secureHash,
+        serverUrl: null, // Set to null as file was streamed directly
+        displayUrl: displayUrl,
+        fileName: fileName,
+        dateTime: now.toLocaleString()
+      };
+  
+      setCapturedImages((prev) => [imageObject, ...prev]);
+      
+      triggerAlert('success', 'Secure Capture Saved', 'Media hash verified and recorded on protocol.');
+  
+      const metaOnly = { ...imageObject, rawPixels: null, pngFile: null };
+      localStorage.setItem('last_verified_capture', JSON.stringify(metaOnly));
+  
     } catch (error) {
-      console.error('Capture error:', error);
+      console.error("Capture/Upload Process Failed:", error);
+      triggerAlert('error', 'Authentication Failed', error.message);
     }
   };
 
-  // --- Logic: Camera Management ---
+  const convertToSlug = (text) => {
+    return text
+      .toString()
+      .toLowerCase()
+      .trim()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9 -]/g, '')
+      .replace(/\s+/g, '-')
+      .replace(/-+/g, '-');
+  };
+
+  const downloadFileFromUrl = (fileUrl, customName = 'truelens-capture.png') => {
+    const link = document.createElement('a');
+    link.href = fileUrl;
+    link.setAttribute('download', customName); // Attempt to force download
+    link.setAttribute('target', '_blank');    // Fallback: open in new tab if download fails
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  };
+  
+  
+  
+  const computeRawPixelHash = async (uint8Array) => {
+    const hashBuffer = await crypto.subtle.digest('SHA-256', uint8Array);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  };
+
   const toggleCamera = useCallback(() => {
     if (isCameraActive && streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
@@ -94,13 +168,13 @@ const Camera = ({ onNavbarVisibilityChange }) => {
         setIsCameraActive(true);
       } catch {
         setIsCameraEnabled(false);
+        triggerAlert('warning', 'Camera Error', 'Could not access the physical camera module.');
       }
     };
     startCamera();
     return () => streamRef.current?.getTracks().forEach(t => t.stop());
   }, [isCameraEnabled]);
 
-  // Clock Update
   useEffect(() => {
     const interval = setInterval(() => {
       const now = new Date();
@@ -109,103 +183,29 @@ const Camera = ({ onNavbarVisibilityChange }) => {
     return () => clearInterval(interval);
   }, []);
 
-  // Keyboard shortcut: Press 'C' to toggle camera
   useEffect(() => {
     const handleKeyPress = (event) => {
-      // Check if 'c' or 'C' is pressed (case-insensitive)
       if (event.key === 'c' || event.key === 'C') {
-        // Prevent default behavior if needed
         event.preventDefault();
         toggleCamera();
       }
     };
-
-    // Add event listener
     window.addEventListener('keydown', handleKeyPress);
-
-    // Cleanup: remove event listener on unmount
-    return () => {
-      window.removeEventListener('keydown', handleKeyPress);
-    };
+    return () => window.removeEventListener('keydown', handleKeyPress);
   }, [toggleCamera]);
-
-  // Scroll detection for navbar visibility (using wheel events since Camera has overflow-hidden)
-  useEffect(() => {
-    if (!onNavbarVisibilityChange) return;
-
-    let scrollTimeout;
-
-    const handleWheel = (event) => {
-      const deltaY = event.deltaY;
-      
-      // Show navbar only on downward scroll (positive deltaY)
-      if (deltaY > 0) {
-        onNavbarVisibilityChange(true);
-        
-        // Reset timeout to hide navbar after scrolling stops
-        clearTimeout(scrollTimeout);
-        scrollTimeout = setTimeout(() => {
-          // Hide navbar after 2 seconds of no downward scrolling
-          onNavbarVisibilityChange(false);
-        }, 2000);
-      }
-      // Hide navbar immediately on upward scroll (negative deltaY)
-      else if (deltaY < 0) {
-        clearTimeout(scrollTimeout);
-        onNavbarVisibilityChange(false);
-      }
-    };
-
-    const handleTouchStart = (event) => {
-      // Store initial touch position
-      const touch = event.touches[0];
-      handleTouchStart.touchStartY = touch.clientY;
-    };
-
-    const handleTouchMove = (event) => {
-      if (!handleTouchStart.touchStartY) return;
-      
-      const touch = event.touches[0];
-      const deltaY = touch.clientY - handleTouchStart.touchStartY;
-      
-      // Show navbar only on downward scroll (swipe down)
-      if (deltaY > 10) {
-        onNavbarVisibilityChange(true);
-        
-        clearTimeout(scrollTimeout);
-        scrollTimeout = setTimeout(() => {
-          onNavbarVisibilityChange(false);
-        }, 2000);
-      }
-      // Hide navbar on upward scroll (swipe up)
-      else if (deltaY < -10) {
-        clearTimeout(scrollTimeout);
-        onNavbarVisibilityChange(false);
-      }
-    };
-
-    const handleTouchEnd = () => {
-      handleTouchStart.touchStartY = null;
-    };
-
-    // Add event listeners
-    window.addEventListener('wheel', handleWheel, { passive: true });
-    window.addEventListener('touchstart', handleTouchStart, { passive: true });
-    window.addEventListener('touchmove', handleTouchMove, { passive: true });
-    window.addEventListener('touchend', handleTouchEnd, { passive: true });
-    
-    return () => {
-      window.removeEventListener('wheel', handleWheel);
-      window.removeEventListener('touchstart', handleTouchStart);
-      window.removeEventListener('touchmove', handleTouchMove);
-      window.removeEventListener('touchend', handleTouchEnd);
-      clearTimeout(scrollTimeout);
-    };
-  }, [onNavbarVisibilityChange]);
 
   return (
     <div className="relative h-screen w-screen bg-black overflow-hidden font-sans">
       
+      {alert && (
+        <Alert 
+          variant={alert.variant}
+          title={alert.title}
+          message={alert.message}
+          onClose={() => setAlert(null)}
+        />
+      )}
+
       {/* 1. FULLSCREEN VIDEO BACKGROUND */}
       <video
         ref={videoRef}
@@ -217,12 +217,14 @@ const Camera = ({ onNavbarVisibilityChange }) => {
 
       {/* 2. OVERLAY: TOP HUD */}
       <div className="absolute top-0 inset-x-0 p-3 sm:p-4 md:p-6 flex flex-col sm:flex-row justify-between items-start gap-3 sm:gap-4 z-20">
-        {/* Brand & Camera Info */}
         <div className="bg-slate-900/60 backdrop-blur-md border border-white/10 rounded-xl sm:rounded-2xl p-3 sm:p-4 text-white shadow-2xl w-full sm:w-auto">
-          <div className="flex items-center gap-2 sm:gap-3 mb-1">
+          <button 
+            onClick={onNavigateHome}
+            className="flex items-center gap-2 sm:gap-3 mb-1 cursor-pointer hover:opacity-80 transition-opacity w-full text-left bg-transparent border-none p-0"
+          >
             <CameraIcon className="w-4 h-4 sm:w-5 sm:h-5 text-indigo-400" />
             <span className="font-bold tracking-wider uppercase text-xs sm:text-sm">True Lens // Live Feed</span>
-          </div>
+          </button>
           <div className="flex items-center gap-2">
             <div className={`w-2 h-2 rounded-full ${isCameraActive ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`} />
             <span className="text-xs text-slate-300 font-mono uppercase tracking-tighter truncate max-w-[200px] sm:max-w-none">
@@ -231,7 +233,6 @@ const Camera = ({ onNavbarVisibilityChange }) => {
           </div>
         </div>
 
-        {/* Time & Toggle */}
         <div className="bg-slate-900/60 backdrop-blur-md border border-white/10 rounded-xl sm:rounded-2xl p-3 sm:p-4 text-white flex items-center gap-3 sm:gap-4 shadow-2xl w-full sm:w-auto justify-between sm:justify-end">
           <div className="flex items-center gap-2 sm:gap-3">
             <Clock className="w-4 h-4 sm:w-5 sm:h-5 text-indigo-400 flex-shrink-0" />
@@ -267,7 +268,6 @@ const Camera = ({ onNavbarVisibilityChange }) => {
       {/* 4. BOTTOM CONTROLS */}
       <div className="absolute bottom-4 sm:bottom-6 md:bottom-10 inset-x-0 flex flex-col items-center gap-4 sm:gap-6 z-20 px-4">
         <div className="flex items-center gap-4 sm:gap-6 md:gap-8">
-          {/* Upload Link */}
           <button 
             onClick={() => fileInputRef.current?.click()}
             className="p-3 sm:p-4 bg-slate-900/60 backdrop-blur-md border border-white/10 rounded-full text-white hover:bg-indigo-600 transition-all shadow-xl"
@@ -276,7 +276,6 @@ const Camera = ({ onNavbarVisibilityChange }) => {
             <ImageIcon className="w-5 h-5 sm:w-6 sm:h-6" />
           </button>
 
-          {/* Capture Shutter */}
           <button
             onClick={captureImage}
             disabled={!isCameraActive}
@@ -287,7 +286,6 @@ const Camera = ({ onNavbarVisibilityChange }) => {
             {isCameraActive && <div className="absolute inset-0 rounded-full animate-ping border border-white opacity-20" />}
           </button>
 
-          {/* Gallery Counter */}
           <div className="p-3 sm:p-4 bg-slate-900/60 backdrop-blur-md border border-white/10 rounded-full text-white shadow-xl min-w-[48px] sm:min-w-[56px] flex flex-col items-center">
              <span className="text-xs font-bold text-indigo-400">{capturedImages.length}</span>
              <ShieldCheck className="w-3 h-3 sm:w-4 sm:h-4" />
@@ -295,27 +293,21 @@ const Camera = ({ onNavbarVisibilityChange }) => {
         </div>
         
         <p className="text-white/40 text-[9px] sm:text-[10px] uppercase tracking-[0.2em] font-medium text-center px-2">
-          Encrypted Verification Active • AES-256
+          Encrypted Verification Active • SHA-256
         </p>
       </div>
 
-      {/* Hidden File Input */}
       <input 
         ref={fileInputRef} 
         type="file" 
         accept="image/*" 
         className="hidden" 
-        onChange={() => { /* Reuse your handleFileUpload logic here */ }} 
+        onChange={(e) => {
+          if (e.target.files && e.target.files[0]) {
+             triggerAlert('info', 'File Analysis', 'Media selected. Authenticate through the portal.');
+          }
+        }} 
       />
-
-      {/* Simple Success Toast (Optional UX) */}
-      {capturedImages.length > 0 && (
-        <div className="absolute bottom-24 sm:bottom-28 md:bottom-32 left-1/2 transform -translate-x-1/2 bg-emerald-500/90 backdrop-blur-md text-white px-3 sm:px-4 py-2 rounded-full text-xs font-bold flex items-center gap-2 animate-bounce z-30">
-          <CheckCircle2 className="w-3 h-3 sm:w-4 sm:h-4" /> 
-          <span className="hidden sm:inline">SECURE CAPTURE SAVED</span>
-          <span className="sm:hidden">SAVED</span>
-        </div>
-      )}
     </div>
   );
 };
