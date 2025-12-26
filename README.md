@@ -1,5 +1,6 @@
 # True Lens
 ### **Deployed URL:** https://truelens.qzz.io
+### **Presentation:** https://www.canva.com/design/DAG8itvpVYY/yfpPqVB5qEVKEtpHZRCFKg/edit?utm_content=DAG8itvpVYY&utm_campaign=designshare&utm_medium=link2&utm_source=sharebutton
 
 ##  Hardware-Based Media Authenticity 
 
